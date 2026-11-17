@@ -76,10 +76,14 @@ internal sealed class PiStreamJsonParser : IStreamJsonParser
         // Same {"mcpServers":{...}} shape pi's mcp.json expects; rhino points at this doc's HTTP
         // listener so the agent always operates on the exact doc. Extra servers the runner resolved
         // are merged in, but never the reserved 'rhino' key. pi's timeout is per-request SECONDS,
-        // so 3600 matches the one-hour ceiling the Claude parser raises.
+        // so 3600 matches the one-hour ceiling the Claude parser raises. exposure "direct" is the
+        // load-bearing piece: pi's default ("codemode") hides MCP tools from the model behind the
+        // codemode meta-tool, which the --tools filter below excludes - the model would then have
+        // no tools at all and answer from imagination. "direct" declares mcp__rhino__* tools to
+        // the model like built-ins, which is what a panel turn expects.
         JsonObject servers = new()
         {
-            ["rhino"] = new JsonObject { ["url"] = mcpUrl, ["timeout"] = 3600 },
+            ["rhino"] = new JsonObject { ["url"] = mcpUrl, ["timeout"] = 3600, ["exposure"] = "direct" },
         };
         foreach (string entry in mcpServers)
             if (JsonNode.Parse(entry) is JsonObject obj)
