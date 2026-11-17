@@ -11,7 +11,7 @@ internal sealed record AgentDefinition
     public string Name { get; init; }
 
     public SearchPaths SearchPaths { get; init; }
-    public IReadOnlyList<ModelSpec> Models { get; init; }
+    public IReadOnlyList<ModelSpec> Models { get; set; }
     public string DefaultModel { get; init; }
     public string DefaultPrompt { get; init; }
 

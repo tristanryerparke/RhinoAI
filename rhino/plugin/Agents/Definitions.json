@@ -100,9 +100,7 @@
           "%USERPROFILE%/.nvm/versions/node/**/bin/pi"
         ]
       },
-      "models": [
-        { "display": "Default (pi settings)", "id": "" }
-      ]
+      "models": []
     }
   ]
 }
