@@ -82,7 +82,7 @@ jobs:
 
       - name: Build plugin (${{ matrix.rhino_target }}, ${{ matrix.plugin.os }})
         shell: bash
-        run: dotnet build rhino/plugin/RhinoAI.csproj --configuration Release --no-restore '-p:RhinoTarget=${{ matrix.rhino_target }}' '-p:PluginOS=${{ matrix.plugin.os }}'
+        run: dotnet build rhino/plugin/RhinoAI.csproj --configuration Release --no-restore '-p:RhinoTarget=${{ matrix.rhino_target }}' '-p:PluginOS=${{ matrix.plugin.os }}' '-p:RhinoAIPackageVersion=0.4.0-pi.1'
 
       - name: Check net48 build
         if: matrix.plugin.os == 'win'
