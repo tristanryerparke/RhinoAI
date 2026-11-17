@@ -112,9 +112,11 @@ internal sealed class PiStreamJsonParser : IStreamJsonParser
         psi.AddArgument("--tools");
         psi.AddArgument(string.Join(",", servers.Select(server => $"mcp__{server.Key}__*")));
 
+        // cmd.exe (the unavoidable host for an npm pi.cmd shim on Windows) cannot carry a multi-line
+        // argument, so the composed prompt travels as a file path instead of inline text - pi accepts
+        // either for --append-system-prompt.
         psi.AddArgument("--append-system-prompt");
-        psi.AddArgument(AgentPrompts.Compose(AISettings.EffectivePrompt(Definition)));
-
+        psi.AddArgument(WriteSystemPrompt(configDir));
         // pi's --session-id opens the existing session with that id or creates it, so fresh spawn
         // and respawn-after-crash pass the same argument (unlike Claude's --session-id/--resume
         // split, the 'resume' flag needs no different spelling here).
@@ -352,8 +354,14 @@ internal sealed class PiStreamJsonParser : IStreamJsonParser
             try
             {
                 string source = Path.Combine(UserPiAgentDir, file);
-                if (File.Exists(source))
-                    File.Copy(source, Path.Combine(dir.FullName, file), overwrite: true);
+                if (!File.Exists(source))
+                    continue;
+                if (file == "settings.json" && StripSessionScope(source) is string stripped)
+                {
+                    File.WriteAllText(Path.Combine(dir.FullName, file), stripped);
+                    continue;
+                }
+                File.Copy(source, Path.Combine(dir.FullName, file), overwrite: true);
             }
             catch (IOException)
             {
@@ -371,6 +379,33 @@ internal sealed class PiStreamJsonParser : IStreamJsonParser
 
     private static string UserPiAgentDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".pi", "agent");
+
+    // The user's real settings carry identity (default provider/model, keys) that must survive the
+    // scratch redirect, but also session scope that must not: `packages` and `extensions` would git
+    // clone and bun install the whole personal setup into a throwaway temp dir on first spawn.
+    // Returns null when the file cannot be read or parsed, so the caller falls back to a plain copy.
+    private static string? StripSessionScope(string source)
+    {
+        try
+        {
+            if (JsonNode.Parse(File.ReadAllText(source)) is not JsonObject settings)
+                return null;
+            settings.Remove("packages");
+            settings.Remove("extensions");
+            return settings.ToJsonString(McpSerializer.Options);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private string WriteSystemPrompt(DirectoryInfo configDir)
+    {
+        string path = Path.Combine(configDir.FullName, "system-prompt.txt");
+        File.WriteAllText(path, AgentPrompts.Compose(AISettings.EffectivePrompt(Definition)));
+        return path;
+    }
 
     private static DirectoryInfo SessionStoreDir { get; } = new(Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RhinoAI", "pi-sessions"));
