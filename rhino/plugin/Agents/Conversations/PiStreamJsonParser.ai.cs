@@ -104,13 +104,13 @@ internal sealed class PiStreamJsonParser : IStreamJsonParser
         if (OperatingSystem.IsMacOS())
         {
             string piDir = Path.GetDirectoryName(psi.FileName) ?? string.Empty;
-            string extra = string.Join(Path.PathSeparator, (string[])
-            [
+            string extra = string.Join(Path.PathSeparator, new[]
+            {
                 piDir,
                 "/opt/homebrew/bin",
                 "/usr/local/bin",
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".bun", "bin"),
-            ].Where(static d => d.Length > 0));
+            }.Where(static d => d.Length > 0));
             psi.Environment["PATH"] = extra + Path.PathSeparator + psi.Environment["PATH"];
         }
 
