@@ -96,6 +96,24 @@ internal sealed class PiStreamJsonParser : IStreamJsonParser
         // No update ping on every spawn.
         psi.Environment["PI_SKIP_VERSION_CHECK"] = "1";
 
+        // A Dock-launched Rhino passes children a minimal PATH with no homebrew/nvm entries, and an
+        // npm pi shim is a script whose `env node` shebang needs node findable: prepend the resolved
+        // pi's own directory (it sits beside node for brew/nvm/npm layouts) plus the standard node
+        // homes, so the shim finds its runtime however pi was installed. CliProcess.ConfigureFileName
+        // has already run, so psi.FileName is the resolved path on macOS.
+        if (OperatingSystem.IsMacOS())
+        {
+            string piDir = Path.GetDirectoryName(psi.FileName) ?? string.Empty;
+            string extra = string.Join(Path.PathSeparator, (string[])
+            [
+                piDir,
+                "/opt/homebrew/bin",
+                "/usr/local/bin",
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".bun", "bin"),
+            ].Where(static d => d.Length > 0));
+            psi.Environment["PATH"] = extra + Path.PathSeparator + psi.Environment["PATH"];
+        }
+
         psi.AddArgument("--mode");
         psi.AddArgument("rpc");
 
