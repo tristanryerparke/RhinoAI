@@ -1,33 +1,8 @@
 import type { StringKey } from '../i18n/strings.js';
 
+// One fixed word while a reply streams: the panel is a tool surface, not entertainment.
 export const BUSY_KEYS: readonly StringKey[] = [
-  'busy.mulling',
-  'busy.grazing',
-  'busy.ruminating',
-  'busy.chewing',
-  'busy.foraging',
-  'busy.rummaging',
-  'busy.scouting',
-  'busy.tracking',
-  'busy.ferreting',
-  'busy.nosing',
-  'busy.digging',
-  'busy.burrowing',
-  'busy.wading',
-  'busy.trekking',
-  'busy.roaming',
-  'busy.ambling',
-  'busy.plodding',
-  'busy.trotting',
-  'busy.galloping',
-  'busy.thundering',
-  'busy.herding',
-  'busy.gathering',
-  'busy.mustering',
-  'busy.corralling',
-  'busy.beavering',
-  'busy.honing',
-  'busy.whirring',
+  'busy.working',
 ];
 
 export const WORD_MS = 4000;

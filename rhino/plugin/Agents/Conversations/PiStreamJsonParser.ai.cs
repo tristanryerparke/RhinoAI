@@ -149,7 +149,8 @@ internal sealed class PiStreamJsonParser : IStreamJsonParser
     }
 
     // ACP content blocks -> one pi RPC prompt line. pi takes a single message string, so text blocks
-    // concatenate; images ride the images array as base64 ImageContent.
+    // concatenate; images ride the images array as base64 ImageContent. A leading '/' switches to the
+    // slash-command path below.
     public string FormatTurn(IReadOnlyList<ContentBlock> prompt)
     {
         List<string> texts = [];
@@ -173,14 +174,96 @@ internal sealed class PiStreamJsonParser : IStreamJsonParser
             }
         }
 
+        string message = string.Join("\n\n", texts);
+        if (message.StartsWith('/'))
+            return FormatSlashCommand(message);
+
         JsonObject command = new()
         {
             ["type"] = "prompt",
-            ["message"] = string.Join("\n\n", texts),
+            ["message"] = message,
         };
         if (images is not null)
             command["images"] = images;
         return command.ToJsonString(McpSerializer.Options);
+    }
+
+    // ---- slash commands ----------------------------------------------------------------------
+
+    // pi's built-in commands are TUI concepts: sent as prompt text they reach the model as literal
+    // words ("/model is a built-in pi command..."). RPC mode has no passthrough for them, so the
+    // mappable ones are translated here into their RPC equivalents, and the turn completes on the
+    // command's response record instead of agent_settled. Anything else starting with '/' rides the
+    // normal prompt path unchanged: extension, skill, and template commands execute natively in pi.
+    //
+    // PendingCommand is written by FormatTurn on the write path before the line is sent and read by
+    // Parse on the read loop only after pi has processed that line, so the handoff needs no lock;
+    // the runner serializes turns, so at most one command is ever outstanding.
+    private string PendingCommand { get; set; } = string.Empty;
+    private string PendingArg { get; set; } = string.Empty;
+    private string PendingNote { get; set; } = string.Empty;
+
+    // Built-ins with no RPC equivalent: they need pi's own terminal (pickers, sign-in, exports).
+    private static readonly HashSet<string> TerminalOnlyCommands =
+    [
+        "settings", "scoped-models", "login", "resume", "copy", "export", "share",
+        "bug", "trust", "mcp", "reload", "hotkeys",
+    ];
+
+    private string FormatSlashCommand(string message)
+    {
+        string trimmed = message.TrimStart();
+        int sp = trimmed.IndexOf(' ');
+        string head = (sp < 0 ? trimmed : trimmed[..sp]).TrimStart('/');
+        string arg = sp < 0 ? string.Empty : trimmed[(sp + 1)..].Trim();
+
+        JsonObject? command = head switch
+        {
+            "model" when arg.Length > 0 => SetModel(arg),
+            "model" => new JsonObject { ["type"] = "get_available_models" },
+            "thinking" when arg.Length > 0 => new JsonObject { ["type"] = "set_thinking_level", ["level"] = arg.ToLowerInvariant() },
+            "thinking" => new JsonObject { ["type"] = "get_available_thinking_levels" },
+            "new" => new JsonObject { ["type"] = "new_session" },
+            "compact" => arg.Length > 0
+                ? new JsonObject { ["type"] = "compact", ["customInstructions"] = arg }
+                : new JsonObject { ["type"] = "compact" },
+            "name" when arg.Length > 0 => new JsonObject { ["type"] = "set_session_name", ["name"] = arg },
+            "name" or "session" => new JsonObject { ["type"] = "get_state" },
+            _ when TerminalOnlyCommands.Contains(head) => new JsonObject { ["type"] = "get_state" },
+            _ => null,
+        };
+        if (command is null)
+        {
+            // Not a known built-in: pass it through as a prompt so pi can run it as an extension,
+            // skill (/skill:name), or template command, exactly as the TUI would.
+            JsonObject passthrough = new() { ["type"] = "prompt", ["message"] = message };
+            return passthrough.ToJsonString(McpSerializer.Options);
+        }
+
+        PendingCommand = command["type"]?.GetValue<string>() ?? string.Empty;
+        PendingArg = arg;
+        PendingNote = TerminalOnlyCommands.Contains(head)
+            ? $"/{head} needs pi's own terminal (picker, sign-in, or file access); it is not available from the Rhino panel."
+            : string.Empty;
+        return command.ToJsonString(McpSerializer.Options);
+    }
+
+    // "/model provider/id" or "/model id" -> set_model. A bare id is sent without provider and pi's
+    // own error text surfaces if it cannot be resolved.
+    private static JsonObject SetModel(string arg)
+    {
+        int slash = arg.IndexOf('/');
+        JsonObject command = new() { ["type"] = "set_model" };
+        if (slash > 0)
+        {
+            command["provider"] = arg[..slash];
+            command["modelId"] = arg[(slash + 1)..];
+        }
+        else
+        {
+            command["modelId"] = arg;
+        }
+        return command;
     }
 
     // ---- turn state ---------------------------------------------------------------------------
@@ -213,7 +296,7 @@ internal sealed class PiStreamJsonParser : IStreamJsonParser
             "tool_execution_end" => EmitToolResult(root),
             "agent_start" => ResetTurnState(),
             "agent_settled" => CompleteTurn(root),
-            "response" => EmitRejectedPrompt(root),
+            "response" => EmitResponse(root),
             _ => ParsedLine.None,
         };
     }
@@ -318,6 +401,110 @@ internal sealed class PiStreamJsonParser : IStreamJsonParser
             "length" => ParsedLine.Complete(Acp.StopReason.MaxTokens, usage),
             _ => ParsedLine.Complete(Acp.StopReason.EndTurn, usage),
         };
+    }
+
+    // One response record: a resolved slash command when one is outstanding, otherwise a rejected
+    // prompt command (the one response worth translating: the run never starts, so no agent_settled
+    // would ever arrive and the turn would hang until process exit). Signing-in and config problems
+    // land in the prompt branch as success:false with an error string.
+    private ParsedLine EmitResponse(JsonElement root)
+    {
+        if (PendingCommand.Length > 0 && Str(root, "command") == PendingCommand)
+            return ResolveCommandResponse(root);
+        return EmitRejectedPrompt(root);
+    }
+
+    // The response to a translated slash command ends the turn with a human note. Cleared before
+    // building the note so an exception mid-format can never leave a stale pending command eating
+    // the next unrelated response.
+    private ParsedLine ResolveCommandResponse(JsonElement root)
+    {
+        string command = PendingCommand;
+        string arg = PendingArg;
+        string note = PendingNote;
+        PendingCommand = PendingArg = PendingNote = string.Empty;
+        root.TryGetProperty("data", out JsonElement data);
+
+        if (TryBool(root, "success") != true)
+        {
+            string error = Str(root, "error");
+            return Note($"/{command} failed{(error.Length > 0 ? $": {error}" : ".")}", failed: true);
+        }
+
+        // A pending note (terminal-only built-ins) replaces any data rendering.
+        if (note.Length > 0)
+            return Note(note);
+
+        return command switch
+        {
+            "set_model" => Note($"Model set to {arg}."),
+            "set_thinking_level" => Note($"Thinking level set to {arg}."),
+            "set_session_name" => Note($"Session name set to {arg}."),
+            "new_session" => TryBool(data, "cancelled") == true
+                ? Note("New session was cancelled by an extension.")
+                : Note("Started a new pi session."),
+            "compact" => data.ValueKind == JsonValueKind.Object && data.TryGetProperty("estimatedTokensAfter", out JsonElement after)
+                ? Note($"Compacted the session (~{after.GetInt32():N0} tokens).")
+                : Note("Compacted the session."),
+            "get_available_models" => ModelList(data),
+            "get_available_thinking_levels" => data.ValueKind == JsonValueKind.Object && data.TryGetProperty("levels", out JsonElement levels)
+                ? Note($"Thinking levels: {string.Join(", ", levels.EnumerateArray().Select(static l => l.GetString() ?? string.Empty))}.")
+                : Note("No thinking levels available for this model."),
+            "get_state" => SessionState(data),
+            _ => Note($"/{command} done."),
+        };
+    }
+
+    private static ParsedLine ModelList(JsonElement data)
+    {
+        if (data.ValueKind != JsonValueKind.Object || !data.TryGetProperty("models", out JsonElement models)
+            || models.ValueKind != JsonValueKind.Array)
+            return Note("No models are configured.");
+        List<string> lines = [];
+        foreach (JsonElement model in models.EnumerateArray())
+        {
+            if (model.ValueKind != JsonValueKind.Object)
+                continue;
+            string id = Str(model, "id");
+            string name = Str(model, "name");
+            string provider = Str(model, "provider");
+            string label = name.Length > 0 ? name : id;
+            string full = provider.Length > 0 ? $"{provider}/{id}" : id;
+            lines.Add($"- {label} ({full})");
+        }
+        return lines.Count > 0
+            ? Note($"Available models:\n{string.Join("\n", lines)}\nSwitch with /model <provider/id>.")
+            : Note("No models are configured.");
+    }
+
+    private static ParsedLine SessionState(JsonElement data)
+    {
+        if (data.ValueKind != JsonValueKind.Object)
+            return Note("No session state available.");
+        string name = Str(data, "sessionName");
+        string model = data.TryGetProperty("model", out JsonElement m) && m.ValueKind == JsonValueKind.Object
+            ? Str(m, "name") is { Length: > 0 } n ? n : Str(m, "id")
+            : string.Empty;
+        string id = Str(data, "sessionId");
+        string messages = data.TryGetProperty("messageCount", out JsonElement count) && count.ValueKind == JsonValueKind.Number
+            ? $" · {count.GetInt32():N0} messages"
+            : string.Empty;
+        string shownName = name.Length > 0 ? name : "(unnamed)";
+        string shownModel = model.Length > 0 ? model : "(none)";
+        return Note($"Session: {shownName}{messages}\nModel: {shownModel}\nId: {id}");
+    }
+
+    // A status note IS the whole turn: one assistant chunk plus completion, so the panel shows the
+    // note and releases the turn without waiting for an agent_settled that will never come.
+    private static ParsedLine Note(string text, bool failed = false)
+    {
+        AgentMessageChunkSessionUpdate chunk = new()
+        {
+            Content = new TextContentBlock { Text = text },
+        };
+        return failed
+            ? ParsedLine.Failed(Acp.StopReason.Refusal, chunk)
+            : new ParsedLine([chunk], true, Acp.StopReason.EndTurn, TokenUsage.Empty, null);
     }
 
     // A rejected prompt command is the one response worth translating: the run never starts, so no
