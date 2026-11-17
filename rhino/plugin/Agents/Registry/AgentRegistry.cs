@@ -23,7 +23,7 @@ internal class AgentRegistry
     public AgentRegistry()
     {
         LoadDefinitions();
-        _ = FillPiModelsAsync();
+        _ = FillPiModelsAsync([.. BuiltInDefinitions, .. CustomDefinitions]);
     }
 
     private sealed record AgentDefinitions(List<AgentDefinition>  Definitions);
@@ -77,12 +77,12 @@ internal class AgentRegistry
     // (provider, model, then capability columns), so the Pi definition is filled in the background
     // once the registry loads; the settings dialog and the panel read the live list whenever they
     // open. A failed run leaves the shipped (default)-only list in place rather than faulting startup.
-    private static async Task FillPiModelsAsync()
+    private static async Task FillPiModelsAsync(IReadOnlyList<AgentDefinition> definitions)
     {
         try
         {
             AgentDefinition? pi = null;
-            foreach (AgentDefinition definition in Instance.AllDefinitions)
+            foreach (AgentDefinition definition in definitions)
                 if (string.Equals(definition.Name, "Pi", StringComparison.OrdinalIgnoreCase))
                     pi = definition;
             if (pi is null) return;
@@ -132,7 +132,12 @@ internal class AgentRegistry
                 models.Add(new ModelSpec(display, id));
             }
             if (models.Count > 0)
+            {
                 pi.Models = models;
+                HostUtils.LogDebugEvent($"[Pi] filled {models.Count} models from pi --list-models.\n");
+            }
+            else
+                HostUtils.LogDebugEvent("[Pi] model list came back empty; keeping (default) only.\n");
         }
         catch (Exception ex)
         {
