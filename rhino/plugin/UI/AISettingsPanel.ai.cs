@@ -344,7 +344,19 @@ internal sealed class AISettingsPanel : Panel
         foreach (ModelSpec spec in row.Models)
             ModelBox.Items.Add(new ListItem { Text = spec.Label(), Key = spec.Id });
 
-        ModelBox.SelectedKey = row.Model;
+        // SelectedKey cannot be relied on for the unset case: an empty stored model (every agent
+        // before its first pick) matches nothing through Eto's key lookup and leaves the box blank,
+        // and Pi's "Default (pi settings)" spec carries an empty id beside the sentinel. Selecting
+        // by index instead lands unset/unknown models on the "(default)" sentinel at index 0.
+        ModelBox.SelectedIndex = IndexOfModelKey(row.Model);
+    }
+
+    private int IndexOfModelKey(string key)
+    {
+        for (int i = 0; i < ModelBox.Items.Count; i++)
+            if (ModelBox.Items[i] is ListItem item && item.Key == key)
+                return i;
+        return 0;
     }
 
     // The "(default)" sentinel carries an empty key, so picking it falls back to the definition's own model.
