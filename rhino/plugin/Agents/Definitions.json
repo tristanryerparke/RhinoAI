@@ -79,6 +79,30 @@
         { "display": "GPT 5.6 Luna", "id": "gpt-5.6-luna" },
         { "display": "GPT 5.5", "id": "gpt-5.5" }
       ]
+    },
+    {
+      "name": "Pi",
+      "company": "Earendil Works",
+      "isBuiltIn": true,
+      "defaultPrompt": "",
+      "defaultModel": "",
+      "searchPaths": {
+        "win": [
+          "%APPDATA%/npm/pi.cmd",
+          "%USERPROFILE%/.bun/bin/pi.exe",
+          "%USERPROFILE%/.local/bin/pi.exe"
+        ],
+        "mac": [
+          "/opt/homebrew/bin/pi",
+          "/usr/local/bin/pi",
+          "%USERPROFILE%/.bun/bin/pi",
+          "%USERPROFILE%/.local/bin/pi",
+          "%USERPROFILE%/.nvm/versions/node/**/bin/pi"
+        ]
+      },
+      "models": [
+        { "display": "Default (pi settings)", "id": "" }
+      ]
     }
   ]
 }

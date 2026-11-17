@@ -49,6 +49,7 @@ internal sealed record AgentDefinition
         "claude" => new AgentRunner(this, docTitle, (client, convo, cwd) => new StreamJsonAgent(this, client, convo, cwd, new ClaudeStreamJsonParser(this))),
         "codex" => new AgentRunner(this, docTitle, (client, convo, cwd) => new StreamJsonAgent(this, client, convo, cwd, new CodexStreamJsonParser(this, CodexHome.Prepare()))),
         "gemini" => new AgentRunner(this, docTitle, (client, _, cwd) => GeminiConnection.Connect(this, client, cwd)),
+        "pi" => new AgentRunner(this, docTitle, (client, convo, cwd) => new StreamJsonAgent(this, client, convo, cwd, new PiStreamJsonParser(this))),
 
         // TODO : Use a better result
         _ => throw new NotImplementedException($"{Name} is not configured")

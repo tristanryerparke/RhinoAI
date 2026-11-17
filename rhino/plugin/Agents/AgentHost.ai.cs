@@ -115,6 +115,10 @@ internal static class AgentHost
                 return new AgentRunner(def, restored, (client, convo, cwd) => new StreamJsonAgent(def, client, convo, cwd, new ClaudeStreamJsonParser(def), resumeId));
             case "codex":
                 return new AgentRunner(def, restored, (client, convo, cwd) => new StreamJsonAgent(def, client, convo, cwd, new CodexStreamJsonParser(def, CodexHome.Prepare()), resumeId));
+            case "pi":
+                // pi resumes through the same --session-id it was created with (opens-or-creates),
+                // so the restored transcript keeps real continuity, like Claude and unlike Gemini.
+                return new AgentRunner(def, restored, (client, convo, cwd) => new StreamJsonAgent(def, client, convo, cwd, new PiStreamJsonParser(def), resumeId));
             case "gemini":
                 
                 // No native --resume seam: the prior turns are shown for the user's reference, but the
